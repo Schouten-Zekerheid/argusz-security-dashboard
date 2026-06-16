@@ -5,14 +5,15 @@ findings from security tools, groups them by service and repository, and turns
 raw scanner output into operational views for developers, security teams, and
 management.
 
-De applicatie ondersteunt in de basis vier categorieën security scans:
+The application supports four main categories of security scans:
 
-- **SCA** (bijv. `Trivy`, `Snyk`) voor kwetsbaarheden in dependencies en containers.
-- **SECRETS** (bijv. `Gitleaks`, `Trufflehog`) voor gelekte secrets.
-- **SAST** (bijv. `Semgrep`, `Sobelow`) voor statische code-analyse.
-- **IaC** (bijv. `Checkov`, `tfsec`, `terrascan`, `kics`) voor Infrastructure as Code misconfiguraties.
+- **SCA** (for example, `Trivy`, `Snyk`) for vulnerabilities in dependencies and containers.
+- **SECRETS** (for example, `Gitleaks`, `Trufflehog`) for leaked secrets.
+- **SAST** (for example, `Semgrep`, `Sobelow`) for static code analysis.
+- **IaC** (for example, `Checkov`, `tfsec`, `terrascan`, `kics`) for Infrastructure as Code misconfigurations.
 
-Dankzij de universele **SARIF v2.1.0** integratie kan Argusz in principe resultaten van elk type scanner die dit formaat exporteert verwerken.
+Thanks to the universal **SARIF v2.1.0** integration, Argusz can process results
+from any type of scanner that exports this format.
 
 ---
 
