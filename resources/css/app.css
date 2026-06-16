@@ -1,0 +1,39 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import 'highlight.js/styles/github-dark.css';
+
+@source '../views/**/*.blade.php';
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+
+@theme {
+    --font-sans:
+        "Instrument Sans", ui-sans-serif, system-ui, sans-serif,
+        "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+        "Noto Color Emoji";
+}
+
+@theme inline {
+    --color-severity-critical: var(--color-red-400);
+    --color-severity-high: var(--color-orange-400);
+    --color-severity-medium: var(--color-amber-400);
+    --color-severity-low: var(--color-lime-500);
+    --color-severity-info: var(--color-sky-400);
+    --color-healthy: var(--color-green-400);
+}
+
+@layer components {
+    .bg-grid {
+        background-image:
+            linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+            linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.03) 1px,
+                transparent 1px
+            );
+        background-size: 40px 40px;
+    }
+
+    .glow-btn {
+        box-shadow: 0 0 80px -20px rgba(59, 130, 246, 0.3);
+    }
+}

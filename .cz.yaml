@@ -1,0 +1,11 @@
+---
+commitizen:
+  customize:
+    allow_empty_commit: true
+    message_template: '{{ bump_type }}: version bump'
+    post_bump_hooks:
+    - git push origin --follow-tags
+    tag_format: $version
+    version_scheme: semver2
+  name: cz_customize
+  version: 0.18.1

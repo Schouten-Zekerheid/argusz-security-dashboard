@@ -1,0 +1,45 @@
+{
+    "$schema": "https://www.schemastore.org/package.json",
+    "name": "argusz",
+    "private": false,
+    "engines": {
+        "node": ">= 24.14.1",
+        "npm": "^11.10.0"
+    },
+    "type": "module",
+    "scripts": {
+        "build": "vite build",
+        "dev": "vite",
+        "lint:blade": "prettier --check \"resources/views/**/*.blade.php\"",
+        "lint:blade:fix": "prettier --write \"resources/views/**/*.blade.php\"",
+        "prepare": "husky"
+    },
+    "dependencies": {
+        "@tailwindcss/typography": "^0.5.19",
+        "@tailwindcss/vite": "^4.1.11",
+        "autoprefixer": "^10.4.20",
+        "axios": "^1.15.2",
+        "chart.js": "^4.5.1",
+        "concurrently": "^9.0.1",
+        "highlight.js": "^11.11.1",
+        "laravel-vite-plugin": "^2.0",
+        "tailwindcss": "^4.0.7",
+        "vite": "^7.3.2"
+    },
+    "optionalDependencies": {
+        "@rollup/rollup-linux-x64-gnu": "4.9.5",
+        "@tailwindcss/oxide-linux-x64-gnu": "^4.0.1",
+        "lightningcss-linux-x64-gnu": "^1.29.1"
+    },
+    "devDependencies": {
+        "@shufo/prettier-plugin-blade": "^1.16.2",
+        "husky": "^9.1.7",
+        "lint-staged": "^16.4.0",
+        "prettier": "^3.8.3",
+        "puppeteer": "^25.1.0"
+    },
+    "lint-staged": {
+        "*.php": "vendor/bin/pint",
+        "resources/views/**/*.blade.php": "prettier --write"
+    }
+}

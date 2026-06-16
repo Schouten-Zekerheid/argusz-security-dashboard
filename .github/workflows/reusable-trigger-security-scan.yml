@@ -1,0 +1,85 @@
+name: Reusable - Trigger Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      event_type:
+        required: false
+        type: string
+        default: "tier1-scan-request"
+      workflow_file:
+        required: false
+        type: string
+        default: "tier-1-security-scans.yml"
+      dashboard_repository:
+        description: "Dashboard repository in owner/repo format that receives the scan dispatch"
+        required: true
+        type: string
+    secrets:
+      CROSS_READ_REPO_TOKEN:
+        required: true
+
+jobs:
+  trigger-security-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record dispatch timestamp
+        id: timestamp
+        run: echo "time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
+
+      - name: Trigger security dashboard
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CROSS_READ_REPO_TOKEN }}
+          repository: ${{ inputs.dashboard_repository }}
+          event-type: ${{ inputs.event_type }}
+          client-payload: |
+            {
+              "repository": "${{ github.repository }}",
+              "service": "${{ github.event.repository.name }}",
+              "repository_url": "https://github.com/${{ github.repository }}",
+              "environment": "${{ github.ref_name }}",
+              "ref": "${{ github.ref }}",
+              "branch": "${{ github.head_ref }}",
+              "sha": "${{ github.event.pull_request.head.sha || github.sha }}",
+              "actor": "${{ github.actor }}"
+            }
+
+      - name: Wait for security scan to complete
+        continue-on-error: true # tolerate dashboard scan failures until findings can be displayed and snoozed there
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_READ_REPO_TOKEN }}
+          DISPATCH_TIME: ${{ steps.timestamp.outputs.time }}
+          WORKFLOW_FILE: ${{ inputs.workflow_file }}
+          EVENT_TYPE: ${{ inputs.event_type }}
+          GITHUB_SHA_VAL: ${{ github.sha }}
+          GITHUB_HEAD_REF_VAL: ${{ github.head_ref }}
+        run: |
+          echo "Waiting for run to be created..."
+          sleep 10
+
+          if [ "$EVENT_TYPE" = "tier1-iac-scan-request" ]; then
+            NAME_FILTER="IaC-security-scan-${GITHUB_SHA_VAL}"
+          else
+            NAME_FILTER="Tier 1 scan — ${GITHUB_REPOSITORY} @ ${GITHUB_HEAD_REF_VAL}"
+          fi
+
+          RUN_ID=""
+          for attempt in $(seq 1 20); do
+            RUN_ID=$(gh api \
+              "repos/${{ inputs.dashboard_repository }}/actions/workflows/${WORKFLOW_FILE}/runs?event=repository_dispatch&per_page=10" \
+              --jq "[.workflow_runs[] | select(.name == \"${NAME_FILTER}\") | select(.created_at >= \"$DISPATCH_TIME\") | .id] | first // empty")
+            [ -n "$RUN_ID" ] && break
+            echo "Run not found yet (attempt $attempt), retrying..."
+            sleep 10
+          done
+
+          if [ -z "$RUN_ID" ]; then
+            echo "Could not find triggered workflow run"
+            exit 1
+          fi
+
+          echo "Found run: $RUN_ID"
+          gh run watch "$RUN_ID" \
+            --repo ${{ inputs.dashboard_repository }} \
+            --exit-status

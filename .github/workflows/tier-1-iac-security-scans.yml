@@ -1,0 +1,95 @@
+name: IaC Tier 1 security scans
+run-name: "IaC-security-scan-${{ github.event.client_payload.sha || github.sha }}"
+
+on:
+  repository_dispatch:
+    types: [tier1-iac-scan-request]
+
+jobs:
+  checkov-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout external repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.client_payload.repository || github.repository }}
+          ref: ${{ github.event.client_payload.branch || github.head_ref }}
+          token: ${{ secrets.CROSS_READ_REPO_TOKEN }}
+          path: external-code
+
+      - name: Install Bicep CLI
+        run: |
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Install Checkov
+        run: |
+          pip install checkov
+          checkov --version
+
+      - name: Run Checkov on external code
+        run: |
+          checkov -d external-code/ \
+            -o sarif \
+            --output-file-path . \
+            --soft-fail || true
+
+      - name: Upload Checkov result as artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: checkov-results
+          path: results_sarif.sarif
+          retention-days: 1
+
+  ci-pusher:
+    runs-on: ubuntu-latest
+    needs: [checkov-scan]
+    if: always()
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v6
+
+      - name: Download Checkov results
+        uses: actions/download-artifact@v8
+        with:
+          name: checkov-results
+          path: scan-results/
+
+      - name: Run normalizer
+        env:
+          TARGET_SERVICE: ${{ github.event.client_payload.service }}
+          TARGET_REPO_URL: ${{ github.event.client_payload.repository_url || format('{0}/{1}', github.server_url, github.repository) }}
+          TARGET_ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          TARGET_BRANCH: ${{ github.event.client_payload.branch || github.head_ref }}
+          TARGET_REPO: ${{ github.event.client_payload.repository || github.repository }}
+          TARGET_SHA: ${{ github.event.client_payload.sha || github.sha }}
+          TARGET_ACTOR: ${{ github.event.client_payload.actor || github.actor }}
+        run: php ci-pusher.php scan-results/
+
+      - name: Upload normalized payload
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: normalized-payload
+          path: normalized-payload.json
+          retention-days: 1
+
+      - name: Push to dashboard
+        env:
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE || 'security-dashboard' }}
+        run: |
+          TOKEN=$(curl --fail -sS \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}" \
+            | jq -r '.value')
+          curl --fail -X POST "${{ secrets.DASHBOARD_URL }}/api/ingest" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @normalized-payload.json

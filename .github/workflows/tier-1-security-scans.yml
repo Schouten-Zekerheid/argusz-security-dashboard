@@ -1,0 +1,205 @@
+name: Tier 1 security scans
+run-name: "Tier 1 scan — ${{ inputs.repository || github.event.client_payload.repository || github.repository }} @ ${{ inputs.branch || github.event.client_payload.branch || github.head_ref || 'master' }}"
+on:
+  pull_request:
+    branches: ["master"]
+
+  repository_dispatch:
+    types: [tier1-scan-request]
+
+  workflow_call:
+    inputs:
+      repository:
+        description: "Target repository in owner/repo format"
+        required: true
+        type: string
+      branch:
+        description: "Branch to scan"
+        required: true
+        type: string
+      service:
+        description: "Service name as registered in the dashboard"
+        required: true
+        type: string
+      repository_url:
+        description: "Full URL of the target repository"
+        required: true
+        type: string
+      sha:
+        description: "Commit SHA to scan"
+        required: false
+        type: string
+        default: ""
+      actor:
+        description: "Actor who triggered the scan"
+        required: false
+        type: string
+        default: "cron"
+      blocking:
+        description: "Whether to fail the build on blocking findings"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  gitleaks-scan:
+    runs-on: ubuntu-latest
+    outputs:
+      gitleaks_version: ${{ steps.install.outputs.gitleaks_version }}
+      resolved_sha: ${{ steps.sha.outputs.sha }}
+
+    steps:
+      - name: Checkout external repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository || github.event.client_payload.repository || github.repository }}
+          ref: ${{ inputs.branch || github.event.client_payload.branch || github.head_ref }}
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN}}
+          path: external-code
+          fetch-depth: 0
+
+      - name: Capture target commit SHA
+        id: sha
+        run: echo "sha=$(git -C external-code rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Install Gitleaks
+        id: install
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz \
+            | tar -xz gitleaks
+          chmod +x gitleaks
+          echo "gitleaks_version=$(./gitleaks version)" >> $GITHUB_OUTPUT
+
+      - name: Run Gitleaks on external code
+        run: |
+          ./gitleaks detect \
+            --source external-code/ \
+            --report-path gitleaks-results.sarif \
+            --report-format sarif \
+            --exit-code 0
+
+      - name: Upload Gitleaks result as artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: gitleaks-results.sarif
+          retention-days: 1
+
+  trivy-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout dashboard repository
+        uses: actions/checkout@v6
+
+      - name: Checkout external repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository || github.event.client_payload.repository || github.repository }}
+          ref: ${{ inputs.branch || github.event.client_payload.branch || github.head_ref }}
+          token: ${{ secrets.CROSS_READ_REPO_TOKEN }}
+          path: external-code
+
+      - name: Run Trivy filesystem scan on external code
+        id: trivy
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: "fs"
+          scan-ref: "external-code/"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"
+          exit-code: "0"
+          scanners: "vuln"
+          ignore-policy: ".github/trivy-ignore-versions.rego"
+
+      - name: Upload scan result for pusher
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: trivy-results.sarif
+          retention-days: 1
+
+  semgrep-scan:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.155.0
+
+    steps:
+      - name: Checkout external repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository || github.event.client_payload.repository || github.repository }}
+          ref: ${{ inputs.branch || github.event.client_payload.branch || github.head_ref }}
+          token: ${{ secrets.CROSS_READ_REPO_TOKEN }}
+          path: external-code
+
+      - name: Run Semgrep on external code
+        run: |
+          semgrep scan \
+            --config auto \
+            external-code/ \
+            --sarif \
+            --output semgrep-results.sarif
+
+      - name: Upload scan result for pusher
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: semgrep-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: semgrep-results.sarif
+          retention-days: 1
+
+  ci-pusher:
+    runs-on: ubuntu-latest
+    needs: [gitleaks-scan, trivy-scan, semgrep-scan]
+    if: always()
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout own repository
+        uses: actions/checkout@v6
+
+      - name: Download Trivy results
+        uses: actions/download-artifact@v8
+        with:
+          name: trivy-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: scan-results/
+
+      - name: Download Gitleaks results
+        uses: actions/download-artifact@v8
+        with:
+          name: gitleaks-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: scan-results/
+
+      - name: Download Semgrep results
+        uses: actions/download-artifact@v8
+        with:
+          name: semgrep-results-${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          path: scan-results/
+
+      - name: Run normalizer
+        env:
+          TARGET_SERVICE: ${{ inputs.service || github.event.client_payload.service || github.event.repository.name }}
+          TARGET_REPO_URL: ${{ inputs.repository_url || github.event.client_payload.repository_url || format('{0}/{1}', github.server_url, github.repository) }}
+          TARGET_ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          TARGET_BRANCH: ${{ inputs.branch || github.event.client_payload.branch || github.head_ref }}
+          TARGET_REPO: ${{ inputs.repository || github.event.client_payload.repository || github.repository }}
+          TARGET_SHA: ${{ inputs.sha || github.event.client_payload.sha || needs.gitleaks-scan.outputs.resolved_sha }}
+          TARGET_ACTOR: ${{ inputs.actor || github.event.client_payload.actor || github.actor }}
+          TARGET_PR_NUMBER: ${{ github.event.client_payload.pr_number || github.event.pull_request.number }}
+          GITLEAKS_VERSION: ${{ needs.gitleaks-scan.outputs.gitleaks_version }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE || 'security-dashboard' }}
+        run: php ci-pusher.php scan-results/
+
+      - name: Check for blocking findings
+        if: ${{ inputs.blocking != false }}
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          TARGET_REPO_URL: ${{ inputs.repository_url || github.event.client_payload.repository_url || format('{0}/{1}', github.server_url, github.repository) }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE || 'security-dashboard' }}
+        run: php check-blocking.php normalized-payload.json

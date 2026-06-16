@@ -1,0 +1,1 @@
+@js(\App\Support\ChartJs::scales(stacked: $stacked ?? null, xTickFontSize: $xTickFontSize ?? null, yTickFontSize: $yTickFontSize ?? null, yStepSize: $yStepSize ?? null, beginAtZero: $beginAtZero ?? null, xMaxTicksLimit: $xMaxTicksLimit ?? null))

@@ -1,0 +1,104 @@
+name: Quality assurance
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  tests-and-qa:
+    name: Tests & QA
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: sqlite3, mongodb
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          echo "DOCUMENTDB_HOST=127.0.0.1" >> .env
+          echo "DOCUMENTDB_PORT=27017" >> .env
+          echo "DOCUMENTDB_DATABASE=argusz_test" >> .env
+          echo "DOCUMENTDB_SSL=false" >> .env
+
+      - name: Directory permissions
+        run: chmod -R 777 storage bootstrap/cache
+
+      - name: Execute tests
+        run: php artisan test
+
+      - name: Laravel Pint
+        run: vendor/bin/pint app --test
+
+      - name: Larastan
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: PhpInsights
+        run: php artisan insights app -n; exit 0
+
+      - name: Rector (dry-run)
+        run: vendor/bin/rector process --dry-run --no-progress-bar
+
+      - name: Security advisories check
+        run: composer update --dry-run
+
+  ward-scan:
+    name: Ward scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Ward
+        run: go install github.com/eljakani/ward@latest
+
+      - name: Configure Ward
+        run: |
+          if [ -f ".ward/config.yaml" ]; then
+            echo "WARD_CONFIG=${GITHUB_WORKSPACE}/.ward/config.yaml" >> "$GITHUB_ENV"
+            echo "Using committed Ward config: .ward/config.yaml"
+          elif [ -f ".ward/config.yml" ]; then
+            echo "WARD_CONFIG=${GITHUB_WORKSPACE}/.ward/config.yml" >> "$GITHUB_ENV"
+            echo "Using committed Ward config: .ward/config.yml"
+          else
+            echo "::notice::No committed Ward config found (.ward/config.yaml). Initializing default config for this run."
+            ward init
+          fi
+
+      - name: Run Ward scan
+        run: |
+          SCAN_FLAGS="--fail-on high"
+          if [ -f ".ward-baseline.json" ]; then
+            SCAN_FLAGS="$SCAN_FLAGS --baseline .ward-baseline.json"
+          fi
+          ward scan . ${SCAN_FLAGS}
