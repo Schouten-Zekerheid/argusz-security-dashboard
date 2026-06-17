@@ -54,7 +54,7 @@ jobs:
         with:
           repository: ${{ inputs.repository || github.event.client_payload.repository || github.repository }}
           ref: ${{ inputs.branch || github.event.client_payload.branch || github.head_ref }}
-          token: ${{ secrets.CROSS_REPO_READ_TOKEN}}
+          token: ${{ secrets.CROSS_READ_REPO_TOKEN }}
           path: external-code
           fetch-depth: 0
 
